@@ -105,12 +105,10 @@ fn write(output: Vec<u64>, samples: usize) {
     output.iter().enumerate().for_each(|(index, value)| {
         let percentage = (*value as f64) / samples as f64 * 100.0;
         let formatted_percentage = format!("{:.4}%", percentage);
-        wtr.write_record(&[
-            index.to_string(),
-            formatted_percentage,
-        ]).unwrap();
+        wtr.write_record(&[index.to_string(), formatted_percentage])
+            .unwrap();
     });
-    
+
     wtr.flush().unwrap();
     println!("Samples #: {}", samples);
 }
