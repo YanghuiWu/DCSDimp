@@ -9,19 +9,21 @@ use rand::distributions::WeightedIndex;
 struct Generator {
     distribution: WeightedIndex<f64>,
     source: Vec<u64>,
+    largest: usize,
 }
-
 
 impl Generator {
     /// Create a new sampler from an iterator of (item, weight) tuples
-    fn new<T: Iterator<Item=(u64, f64)>>(t: T) -> Generator {
+    fn new<T: Iterator<Item = (u64, f64)>>(t: T) -> Generator {
         let vector: Vec<(u64, f64)> = t.into_iter().collect(); //Guarantees our index ordering.
         let distribution = WeightedIndex::new(vector.iter().map(|(_, weight)| *weight)).unwrap();
-        let source = vector.into_iter().map(|(item, _)| item).collect();
+        let source: Vec<u64> = vector.into_iter().map(|(item, _)| item).collect();
+        let largest = source.iter().max().unwrap().clone() as usize;
 
         Generator {
             distribution,
             source,
+            largest,
         }
     }
 
@@ -35,9 +37,9 @@ impl Generator {
 
 /// Struct for caching simulator
 struct Simulator {
-    size: u64,
+    size: usize,
     // Track number of expirations for each cache entry
-    tracker: HashMap<u64, u64>,
+    tracker: HashMap<u64, usize>,
     step: u64,
 }
 
@@ -61,85 +63,62 @@ impl Simulator {
 
     fn update(&mut self) {
         self.step += 1;
-        self.size -= self.tracker.remove(&self.step).unwrap_or(0);
+        let expired = self.tracker.remove(&self.step).unwrap_or(0);
+        self.size -= expired;
     }
 }
 
 /// Perform the caching simulation
-fn caching(ten_dist: Generator, _cache_size: u64, _delta: f64, samples_to_issue: usize) -> Vec<u64> {
+fn caching(ten_dist: Generator, _cache_size: u64, samples_to_issue: usize) -> Vec<u64> {
     let mut cache = Simulator::init();
-    // let samples_to_issue: u64 = length as u64;
-    // let mut prev_output: Vec<u64> = vec![0; samples_to_issue + 1];
-    let mut dcsd_observed = vec![0; samples_to_issue + 1];
-    let mut cycles = 0;
+    let mut dcsd_observed = vec![0; ten_dist.largest + 2];
     let tenancy = ten_dist.generate();
     cache.add_tenancy(tenancy);
 
-    loop {
-        // println!("cycle: {}", cycles);
-        if cycles > 100000 {//this is the main loop, larger numbers of loop gives higher precisions
-            return dcsd_observed.clone();
-        }
-        for _ in 0..samples_to_issue - 1 {
-            let tenancy = ten_dist.generate();
-            cache.add_tenancy(tenancy);
-            dcsd_observed[cache.size as usize] += 1;
-        }
-
-        // prev_output = dcsd_observed.clone();
-        cycles += 1;
+    for _cycles in 0..samples_to_issue {
+        let tenancy = ten_dist.generate();
+        cache.add_tenancy(tenancy);
+        dcsd_observed[cache.size] += 1;
     }
+    return dcsd_observed.clone();
 }
 
-
-fn get_sum(input: &Vec<u64>) -> u128 {
-    let mut sum: u128 = 0;
-
-    input.iter().for_each(|&k| sum += k as u128);
-
-    if sum == 0 {
-        return 1;
-    }
-    return sum;
-}
-
-
-fn input_to_hashmap() -> (Generator, usize) {
+fn input_to_hashmap() -> Generator {
     let mut rdr = csv::Reader::from_reader(io::stdin());
     let mut tenancy_dist: HashMap<u64, f64> = HashMap::new();
-    let mut largest = 0;
+    // let mut largest = 0;
     for result in rdr.records() {
         let record = result.unwrap();
 
         let tenancy = record.get(0).unwrap().parse().unwrap();
         let prob = f64::from_str(&record.get(1).unwrap()).unwrap();
 
-        if tenancy > largest {
-            largest = tenancy;
-        }
         tenancy_dist.insert(tenancy, prob);
     }
-    return (Generator::new(tenancy_dist.into_iter()), largest as usize);
+    return Generator::new(tenancy_dist.into_iter());
 }
 
-
-fn write(output: Vec<u64>) {
-    let sum = get_sum(&output);
+fn write(output: Vec<u64>, samples: usize) {
     let mut wtr = csv::Writer::from_writer(io::stdout());
-    let mut index: usize = 0;
-    wtr.write_record(&["DCS", "probability"]).expect("cannot write");
-    output.iter().for_each(|&key| {
-        wtr.write_record(&[index.to_string(), ((key as f64) / sum as f64).to_string()]).expect("cannot write");
-        // println!("{}: {}", index, key);
-        index += 1;
+    wtr.write_record(&["DCS", "probability"])
+        .expect("cannot write");
+    output.iter().enumerate().for_each(|(index, value)| {
+        let percentage = (*value as f64) / samples as f64 * 100.0;
+        let formatted_percentage = format!("{:.4}%", percentage);
+        wtr.write_record(&[
+            index.to_string(),
+            formatted_percentage,
+        ]).unwrap();
     });
-    println!("sum: {}", sum);
+    
+    wtr.flush().unwrap();
+    println!("Samples #: {}", samples);
 }
-
 
 fn main() {
     // let test = input_to_hashmap();
-    let (tenancy_dist, largest) = input_to_hashmap();
-    let output = caching(tenancy_dist, 100, 0.005, largest);
-    write(output);
+    let tenancy_dist = input_to_hashmap();
+    let samples = tenancy_dist.largest * 200000;
+    let output = caching(tenancy_dist, 100, samples);
+    write(output, samples);
 }
